@@ -1,6 +1,6 @@
 import os
-from datetime import timezone 
-from dotenv import load_dotenv 
+from datetime import timezone
+from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
@@ -26,7 +26,7 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-#extensi 
+#extensi
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login' # redirectioneaza user-ul la pagina de login
@@ -39,7 +39,7 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(20), nullable=False, default='user')
-    
+
     projects_created = db.relationship('Project', backref='creator', lazy=True, foreign_keys='Project.creator_id')
     files_uploaded = db.relationship('File', backref='uploader', lazy=True, foreign_keys='File.uploader_id')
 
@@ -58,7 +58,7 @@ class Project(db.Model):
     description = db.Column(db.Text, nullable=True)
     creation_date = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     creator_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    
+
     files = db.relationship('File', backref='project', lazy=True, cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -71,7 +71,7 @@ class File(db.Model):
     file_type = db.Column(db.String(50), nullable=True)
     size = db.Column(db.Integer, nullable=True)
     upload_date = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-    
+
     uploader_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     project_id = db.Column(db.Integer, db.ForeignKey('project.id'), nullable=False)
 
@@ -81,6 +81,87 @@ class File(db.Model):
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+@app.route('/')
+def index():
+    return render_template('index.html', title='Acasă')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+
+        if password != confirm_password:
+            flash('Parolele nu se potrivesc!', 'danger')
+            return redirect(url_for('register'))
+
+        user_by_username = User.query.filter_by(username=username).first()
+        if user_by_username:
+            flash('Numele de utilizator există deja.', 'danger')
+            return redirect(url_for('register'))
+
+        user_by_email = User.query.filter_by(email=email).first()
+        if user_by_email:
+            flash('Adresa de email este deja folosită.', 'danger')
+            return redirect(url_for('register'))
+
+        new_user = User(username=username, email=email)
+        new_user.set_password(password) # Parolele sunt hash-uite
+        # primul utilizator il facem admin
+        if User.query.count() == 0:
+            new_user.role = 'admin'
+            flash('Primul utilizator înregistrat a fost setat ca admin!', 'info')
+
+        db.session.add(new_user)
+        db.session.commit()
+        flash('Contul tău a fost creat! Te poți autentifica acum.', 'success')
+        return redirect(url_for('login'))
+    return render_template('register.html', title='Înregistrare')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        user = User.query.filter_by(email=email).first()
+        if user and user.check_password(password):
+            login_user(user) # Flask-Login gestioneaza sesiunea
+            flash('Autentificare reușită!', 'success')
+            # Redirect la pagina solicitata inainte de login
+            next_page = request.args.get('next')
+            return redirect(next_page) if next_page else redirect(url_for('index'))
+        else:
+            flash('Autentificare eșuată. Verifică email-ul și parola.', 'danger')
+    return render_template('login.html', title='Autentificare')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user() # Flask-Login sterge sesiunea
+    flash('Ai fost deconectat.', 'info')
+    return redirect(url_for('login'))
+
+@app.route('/projects')
+@login_required
+def projects_list(): #placeholder
+    flash('Pagina pentru lista de proiecte va fi implementată curând!', 'info')
+    return render_template('index.html', title="Listă Proiecte (Placeholder)")
+
+@app.route('/project/create', methods=['GET', 'POST'])
+@login_required
+def create_project(): #placeholder 
+    if current_user.role != 'admin':
+        flash('Doar administratorii pot crea proiecte.', 'danger')
+        return redirect(url_for('index'))
+    flash('Pagina pentru crearea de proiecte va fi implementată curând!', 'info')
+    return render_template('index.html', title="Creare Proiect (Placeholder)")
 
 if __name__ == '__main__':
     with app.app_context():

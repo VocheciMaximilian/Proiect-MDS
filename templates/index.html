@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Acasă{% endblock %}
+{% block content %}
+  <div class="jumbotron">
+    <h1 class="display-4">Bun venit pe ColabConstruct!</h1>
+    <p class="lead">Platforma ta de colaborare pentru proiecte în construcții.</p>
+    <hr class="my-4">
+    {% if current_user.is_authenticated %}
+      <p>Ești autentificat ca {{ current_user.username }}.</p>
+      <a class="btn btn-primary btn-lg" href="{{ url_for('projects_list') }}" role="button">Vezi Proiectele</a>
+    {% else %}
+      <p>Pentru a începe, te rugăm să te autentifici sau să îți creezi un cont.</p>
+      <a class="btn btn-primary btn-lg" href="{{ url_for('login') }}" role="button">Autentificare</a>
+      <a class="btn btn-success btn-lg" href="{{ url_for('register') }}" role="button">Înregistrare</a>
+    {% endif %}
+  </div>
+{% endblock %}
