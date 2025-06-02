@@ -7,6 +7,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, curren
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime
+import uuid # Adăugat pentru nume unice de fișiere
 
 load_dotenv() #pentru .env
 app = Flask(__name__)
@@ -81,6 +82,10 @@ class File(db.Model):
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 @app.route('/')
 def index():
@@ -179,10 +184,66 @@ def create_project(): #placeholder
 
 @app.route('/project/<int:project_id>')
 @login_required
-def view_project(project_id): #placeholder 
+def view_project(project_id): #placeholder
     project = Project.query.get_or_404(project_id)
-    flash(f'Pagina pentru vizualizarea proiectului "{project.name}" va fi implementată curând!', 'info')
-    return redirect(url_for('projects_list')) 
+    return render_template('view_project.html', title=project.name, project=project)
+
+@app.route('/project/<int:project_id>/upload', methods=['POST'])
+@login_required
+def upload_file(project_id):
+    project = Project.query.get_or_404(project_id)
+
+    if 'file' not in request.files:
+        flash('Niciun fișier selectat.', 'danger')
+        return redirect(url_for('view_project', project_id=project.id))
+
+    file = request.files['file']
+
+    if file.filename == '':
+        flash('Niciun fișier selectat.', 'danger')
+        return redirect(url_for('view_project', project_id=project.id))
+
+    if file and allowed_file(file.filename):
+        original_filename = secure_filename(file.filename)
+        file_extension = original_filename.rsplit('.', 1)[1].lower()
+        stored_filename = str(uuid.uuid4()) + '.' + file_extension
+
+        project_upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(project.id))
+        if not os.path.exists(project_upload_folder):
+            os.makedirs(project_upload_folder)
+
+        file_path = os.path.join(project_upload_folder, stored_filename)
+
+        try:
+            file.save(file_path)
+            file_size = os.path.getsize(file_path)
+
+            new_file_db = File(
+                original_filename=original_filename,
+                stored_filename=stored_filename,
+                file_type=file_extension,
+                size=file_size,
+                uploader_id=current_user.id,
+                project_id=project.id
+            )
+            db.session.add(new_file_db)
+            db.session.commit()
+            flash(f'Fișierul "{original_filename}" a fost încărcat cu succes.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'A apărut o eroare la încărcarea fișierului: {str(e)}', 'danger')
+    else:
+        flash('Tip de fișier nepermis.', 'danger')
+
+    return redirect(url_for('view_project', project_id=project.id))
+
+@app.route('/download_file/<int:file_id>')
+@login_required
+def download_file(file_id): #placeholder
+    file_record = File.query.get_or_404(file_id)
+    project_upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(file_record.project_id))
+    flash(f'Funcționalitatea de download pentru "{file_record.original_filename}" va fi implementată curând!', 'info')
+    return redirect(url_for('view_project', project_id=file_record.project_id))
 
 if __name__ == '__main__':
     with app.app_context():

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }}{% endblock %}
+{% block content %}
+  <div class="mb-4">
+    <h2>{{ project.name }}</h2>
+    <p><strong>Descriere:</strong> {{ project.description if project.description else 'N/A' }}</p>
+    <p><small>Creat de: {{ project.creator.username }} la {{ project.creation_date.strftime('%d-%m-%Y %H:%M') }}</small></p>
+  </div>
+  <hr>
+
+  <h4>Încarcă Fișier Nou</h4>
+  <form method="POST" action="{{ url_for('upload_file', project_id=project.id) }}" enctype="multipart/form-data">
+    <div class="form-group">
+      <label for="file">Selectează fișier:</label>
+      <input type="file" class="form-control-file" id="file" name="file" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Încarcă</button>
+  </form>
+  <hr>
+
+  <h4>Fișiere Proiect</h4>
+  {% if project.files %}
+    <ul class="list-group">
+      {% for file in project.files %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <div>
+            <!-- Vom adăuga link de download mai târziu -->
+            <a href="{{ url_for('download_file', file_id=file.id) }}">{{ file.original_filename }}</a>
+            <small class="d-block">Tip: {{ file.file_type if file.file_type else 'N/A' }}, Dimensiune: {{ "%.2f"|format(file.size / 1024 if file.size else 0) }} KB</small>
+            <small class="d-block">Încărcat de: {{ file.uploader.username }} la {{ file.upload_date.strftime('%d-%m-%Y %H:%M') }}</small>
+          </div>
+          <!-- Aici pot veni butoane de acțiune (Delete) -->
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>Nu există fișiere încărcate pentru acest proiect.</p>
+  {% endif %}
+  <div class="mt-4">
+    <a href="{{ url_for('projects_list') }}" class="btn btn-secondary">Înapoi la Lista de Proiecte</a>
+  </div>
+{% endblock %}
