@@ -19,7 +19,14 @@
             <p>{{ project.description|truncate(150) if project.description else 'Fără descriere' }}</p>
             <small>Creat de: {{ project.creator.username }} la {{ project.creation_date.strftime('%d-%m-%Y %H:%M') }}</small>
           </div>
-          <!-- (Edit, Delete) pentru admini -->
+          {% if current_user.role == 'admin' %}
+          <div>
+            <a href="{{ url_for('edit_project', project_id=project.id) }}" class="btn btn-warning btn-sm mr-2">Editează</a>
+            <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}" style="display: inline;" onsubmit="return confirm('Ești sigur că vrei să ștergi acest proiect și toate fișierele sale? Această acțiune este ireversibilă!');">
+                <button type="submit" class="btn btn-danger btn-sm">Șterge Proiect</button>
+            </form>
+          </div>
+          {% endif %}
         </li>
       {% endfor %}
     </ul>

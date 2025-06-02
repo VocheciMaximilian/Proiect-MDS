@@ -24,12 +24,17 @@
       {% for file in project.files %}
         <li class="list-group-item d-flex justify-content-between align-items-center">
           <div>
-            <!-- Vom adăuga link de download mai târziu -->
             <a href="{{ url_for('download_file', file_id=file.id) }}">{{ file.original_filename }}</a>
             <small class="d-block">Tip: {{ file.file_type if file.file_type else 'N/A' }}, Dimensiune: {{ "%.2f"|format(file.size / 1024 if file.size else 0) }} KB</small>
             <small class="d-block">Încărcat de: {{ file.uploader.username }} la {{ file.upload_date.strftime('%d-%m-%Y %H:%M') }}</small>
           </div>
-          <!-- Aici pot veni butoane de acțiune (Delete) -->
+          {% if current_user.role == 'admin' %}
+          <div>
+            <form method="POST" action="{{ url_for('delete_file', file_id=file.id) }}" style="display: inline;" onsubmit="return confirm('Ești sigur că vrei să ștergi acest fișier?');">
+                <button type="submit" class="btn btn-danger btn-sm">Șterge Fișier</button>
+            </form>
+          </div>
+          {% endif %}
         </li>
       {% endfor %}
     </ul>

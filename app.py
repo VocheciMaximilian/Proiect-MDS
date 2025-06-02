@@ -7,10 +7,16 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, curren
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime
-import uuid # Adăugat pentru nume unice de fișiere
+import uuid
+import logging
+import shutil # Adăugat pentru ștergerea folderelor
 
 load_dotenv() #pentru .env
 app = Flask(__name__)
+
+# Configurare logger-ul applicatiei
+app.logger.setLevel(logging.INFO)
+
 # Configuratii
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', '123456') # daca nu e in .env
 
@@ -155,13 +161,13 @@ def logout():
 
 @app.route('/projects')
 @login_required
-def projects_list(): #placeholder
+def projects_list():
     projects = Project.query.order_by(Project.creation_date.desc()).all()
     return render_template('projects_list.html', title="Listă Proiecte", projects=projects)
 
 @app.route('/project/create', methods=['GET', 'POST'])
 @login_required
-def create_project(): #placeholder
+def create_project():
     if current_user.role != 'admin':
         flash('Doar administratorii pot crea proiecte.', 'danger')
         return redirect(url_for('index'))
@@ -231,7 +237,8 @@ def upload_file(project_id):
             flash(f'Fișierul "{original_filename}" a fost încărcat cu succes.', 'success')
         except Exception as e:
             db.session.rollback()
-            flash(f'A apărut o eroare la încărcarea fișierului: {str(e)}', 'danger')
+            app.logger.error(f"Eroare la încărcarea fișierului {original_filename} pentru proiectul {project_id}: {str(e)}", exc_info=True)
+            flash(f'A apărut o eroare la încărcarea fișierului.', 'danger') # Mesaj generic pentru user
     else:
         flash('Tip de fișier nepermis.', 'danger')
 
@@ -239,11 +246,117 @@ def upload_file(project_id):
 
 @app.route('/download_file/<int:file_id>')
 @login_required
-def download_file(file_id): #placeholder
+def download_file(file_id):
     file_record = File.query.get_or_404(file_id)
-    project_upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(file_record.project_id))
-    flash(f'Funcționalitatea de download pentru "{file_record.original_filename}" va fi implementată curând!', 'info')
-    return redirect(url_for('view_project', project_id=file_record.project_id))
+    project_specific_upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(file_record.project_id))
+
+    try:
+        return send_from_directory(
+            directory=project_specific_upload_folder,
+            path=file_record.stored_filename,
+            as_attachment=True,
+            download_name=file_record.original_filename
+        )
+    except FileNotFoundError:
+        app.logger.error(f"Fișierul {file_record.stored_filename} (ID: {file_id}) nu a fost găsit pe server pentru proiectul {file_record.project_id}.", exc_info=True)
+        flash('Fișierul nu a fost găsit pe server. Contactați administratorul.', 'danger')
+        return redirect(url_for('view_project', project_id=file_record.project_id))
+    except Exception as e:
+        app.logger.error(f"Eroare la descărcarea fișierului {file_record.original_filename} (ID: {file_id}): {str(e)}", exc_info=True)
+        flash(f'A apărut o eroare la descărcarea fișierului.', 'danger') # Mesaj generic pentru user
+        return redirect(url_for('view_project', project_id=file_record.project_id))
+
+@app.route('/delete_file/<int:file_id>', methods=['POST'])
+@login_required
+def delete_file(file_id):
+    if current_user.role != 'admin':
+        flash('Doar administratorii pot șterge fișiere.', 'danger')
+        file_record_temp = File.query.get(file_id)
+        if file_record_temp:
+            return redirect(url_for('view_project', project_id=file_record_temp.project_id))
+        return redirect(url_for('index'))
+
+    file_record = File.query.get_or_404(file_id)
+    project_id_redirect = file_record.project_id
+
+    try:
+        project_specific_upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(file_record.project_id))
+        file_path = os.path.join(project_specific_upload_folder, file_record.stored_filename)
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        else:
+            app.logger.warning(f"Fișierul fizic {file_path} nu a fost găsit pentru ștergere (File ID: {file_id}).")
+
+        db.session.delete(file_record)
+        db.session.commit()
+        flash(f'Fișierul "{file_record.original_filename}" a fost șters cu succes.', 'success')
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Eroare la ștergerea fișierului {file_record.original_filename} (ID: {file_id}): {str(e)}", exc_info=True)
+        flash('A apărut o eroare la ștergerea fișierului.', 'danger')
+
+    return redirect(url_for('view_project', project_id=project_id_redirect))
+
+@app.route('/delete_project/<int:project_id>', methods=['POST'])
+@login_required
+def delete_project(project_id):
+    if current_user.role != 'admin':
+        flash('Doar administratorii pot șterge proiecte.', 'danger')
+        return redirect(url_for('projects_list'))
+
+    project_to_delete = Project.query.get_or_404(project_id)
+
+    try:
+        project_upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(project_id))
+        if os.path.exists(project_upload_folder):
+            shutil.rmtree(project_upload_folder)
+            app.logger.info(f"Folderul {project_upload_folder} a fost șters.")
+        else:
+            app.logger.warning(f"Folderul {project_upload_folder} nu a fost găsit pentru ștergere (Project ID: {project_id}).")
+        
+        db.session.delete(project_to_delete)
+        db.session.commit()
+        flash(f'Proiectul "{project_to_delete.name}" și toate fișierele asociate au fost șterse cu succes.', 'success')
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Eroare la ștergerea proiectului {project_to_delete.name} (ID: {project_id}): {str(e)}", exc_info=True)
+        flash('A apărut o eroare la ștergerea proiectului.', 'danger')
+
+    return redirect(url_for('projects_list'))
+
+@app.route('/edit_project/<int:project_id>', methods=['GET', 'POST'])
+@login_required
+def edit_project(project_id):
+    if current_user.role != 'admin':
+        flash('Doar administratorii pot edita proiecte.', 'danger')
+        return redirect(url_for('projects_list'))
+
+    project_to_edit = Project.query.get_or_404(project_id)
+
+    if request.method == 'POST':
+        new_name = request.form.get('name')
+        new_description = request.form.get('description')
+
+        if not new_name:
+            flash('Numele proiectului este obligatoriu!', 'danger')
+            return render_template('edit_project.html', title=f"Editare Proiect: {project_to_edit.name}", project=project_to_edit)
+
+        project_to_edit.name = new_name
+        project_to_edit.description = new_description
+        
+        try:
+            db.session.commit()
+            flash(f'Proiectul "{project_to_edit.name}" a fost actualizat cu succes!', 'success')
+            return redirect(url_for('projects_list'))
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Eroare la actualizarea proiectului {project_to_edit.name} (ID: {project_id}): {str(e)}", exc_info=True)
+            flash('A apărut o eroare la actualizarea proiectului.', 'danger')
+    
+    return render_template('edit_project.html', title=f"Editare Proiect: {project_to_edit.name}", project=project_to_edit)
 
 if __name__ == '__main__':
     with app.app_context():
