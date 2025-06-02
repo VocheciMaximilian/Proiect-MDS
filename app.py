@@ -151,17 +151,38 @@ def logout():
 @app.route('/projects')
 @login_required
 def projects_list(): #placeholder
-    flash('Pagina pentru lista de proiecte va fi implementată curând!', 'info')
-    return render_template('index.html', title="Listă Proiecte (Placeholder)")
+    projects = Project.query.order_by(Project.creation_date.desc()).all()
+    return render_template('projects_list.html', title="Listă Proiecte", projects=projects)
 
 @app.route('/project/create', methods=['GET', 'POST'])
 @login_required
-def create_project(): #placeholder 
+def create_project(): #placeholder
     if current_user.role != 'admin':
         flash('Doar administratorii pot crea proiecte.', 'danger')
         return redirect(url_for('index'))
-    flash('Pagina pentru crearea de proiecte va fi implementată curând!', 'info')
-    return render_template('index.html', title="Creare Proiect (Placeholder)")
+
+    if request.method == 'POST':
+        name = request.form.get('name')
+        description = request.form.get('description')
+
+        if not name:
+            flash('Numele proiectului este obligatoriu!', 'danger')
+            return render_template('create_project.html', title="Creare Proiect Nou", description=description)
+
+        new_project = Project(name=name, description=description, creator_id=current_user.id)
+        db.session.add(new_project)
+        db.session.commit()
+        flash(f'Proiectul "{name}" a fost creat cu succes!', 'success')
+        return redirect(url_for('projects_list'))
+
+    return render_template('create_project.html', title="Creare Proiect Nou")
+
+@app.route('/project/<int:project_id>')
+@login_required
+def view_project(project_id): #placeholder 
+    project = Project.query.get_or_404(project_id)
+    flash(f'Pagina pentru vizualizarea proiectului "{project.name}" va fi implementată curând!', 'info')
+    return redirect(url_for('projects_list')) 
 
 if __name__ == '__main__':
     with app.app_context():

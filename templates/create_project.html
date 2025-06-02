@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Creare Proiect Nou{% endblock %}
+{% block content %}
+  <h2>Creare Proiect Nou</h2>
+  <form method="POST" action="{{ url_for('create_project') }}">
+    <div class="form-group">
+      <label for="name">Nume Proiect</label>
+      <input type="text" class="form-control" id="name" name="name" required>
+    </div>
+    <div class="form-group">
+      <label for="description">Descriere Proiect</label>
+      <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Creează Proiect</button>
+  </form>
+{% endblock %}
