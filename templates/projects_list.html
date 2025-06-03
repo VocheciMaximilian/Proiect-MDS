@@ -1,31 +1,36 @@
 {% extends "base.html" %}
 
+{% block title %}{{ title if title else 'Toate Proiectele' }}{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>{{ title }}</h1> 
+        <h1>{{ title if title else 'Toate Proiectele' }}</h1>
         {% if current_user.is_authenticated %}
             <a href="{{ url_for('create_project') }}" class="btn btn-success">
-                Creează Proiect Nou
+                <i class="fas fa-plus-circle"></i> Creează Proiect Nou
             </a>
         {% endif %}
     </div>
 
-    {% if projects and projects.items %} 
+    {% if projects and projects.items %}
         <div class="list-group">
-            {% for project in projects.items %}
-                <a href="{{ url_for('project_detail', project_id=project.id) }}" class="list-group-item list-group-item-action flex-column align-items-start mb-3 shadow-sm rounded">
+            {% for project_item in projects.items %} {# Am redenumit variabila de iterare #}
+                <a href="{{ url_for('project_detail', project_id=project_item.id) }}" class="list-group-item list-group-item-action flex-column align-items-start mb-3 shadow-sm rounded">
                     <div class="d-flex w-100 justify-content-between">
-                        <h5 class="mb-1">{{ project.name }}</h5>
-                        <small class="text-muted">{{ project.date_created.strftime('%d-%m-%Y %H:%M') }}</small>
+                        <h5 class="mb-1">{{ project_item.name }}</h5>
+                        <small class="text-muted">{{ project_item.date_created.strftime('%d-%m-%Y') }}</small>
                     </div>
-                    {% if project.description %}
-                        <p class="mb-1">{{ project.description[:200] }}{% if project.description|length > 200 %}...{% endif %}</p>
+                    {% if project_item.description %}
+                        <p class="mb-1">{{ project_item.description[:150] }}{% if project_item.description|length > 150 %}...{% endif %}</p>
                     {% else %}
-                        <p class="mb-1 fst-italic text-muted">Fără descriere.</p>
+                         <p class="mb-1 fst-italic text-muted">Fără descriere.</p>
                     {% endif %}
-                    <small class="text-muted">Creat de: {{ project.creator.username if project.creator else 'Utilizator necunoscut' }}</small>
-                    <span class="badge bg-secondary rounded-pill float-end mt-1">{{ project.files|length }} fișier(e)</span>
+                    <small class="text-muted">
+                        Creat de: {{ project_item.creator.username if project_item.creator else 'N/A' }} | 
+                        Manager: {{ project_item.manager.username if project_item.manager else (project_item.creator.username if project_item.creator else 'N/A') }}
+                    </small>
+                     <span class="badge bg-info rounded-pill float-end">{{ project_item.participants.count() }} participant(i)</span>
                 </a>
             {% endfor %}
         </div>
@@ -36,7 +41,6 @@
                 <li class="page-item {% if not projects.has_prev %}disabled{% endif %}">
                     <a class="page-link" href="{{ url_for('projects_list', page=projects.prev_num if projects.has_prev else '#') }}">Anterior</a>
                 </li>
-
                 {% for page_num in projects.iter_pages(left_edge=1, right_edge=1, left_current=1, right_current=2) %}
                     {% if page_num %}
                         {% if projects.page == page_num %}
@@ -48,7 +52,6 @@
                         <li class="page-item disabled"><span class="page-link">...</span></li>
                     {% endif %}
                 {% endfor %}
-
                 <li class="page-item {% if not projects.has_next %}disabled{% endif %}">
                     <a class="page-link" href="{{ url_for('projects_list', page=projects.next_num if projects.has_next else '#') }}">Următor</a>
                 </li>
@@ -56,19 +59,16 @@
         </nav>
         {% endif %}
 
-    {% elif projects and not projects.items and projects.total == 0 %} 
+    {% elif projects and projects.total == 0 %}
         <div class="alert alert-info mt-4" role="alert">
             Momentan nu există proiecte. 
             {% if current_user.is_authenticated %}
                 <a href="{{ url_for('create_project') }}" class="alert-link">Creează unul acum!</a>
             {% endif %}
         </div>
-    {% else %} 
-         <div class="alert alert-info mt-4" role="alert">
-            Momentan nu există proiecte. 
-            {% if current_user.is_authenticated %}
-                <a href="{{ url_for('create_project') }}" class="alert-link">Creează unul acum!</a>
-            {% endif %}
+    {% else %}
+         <div class="alert alert-warning mt-4" role="alert">
+            Nu s-au putut încărca proiectele sau nu există proiecte.
         </div>
     {% endif %}
 </div>

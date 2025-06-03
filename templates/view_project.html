@@ -1,86 +1,111 @@
 {% extends "base.html" %}
 
-{% block title %}{{ project.name }}{% endblock %} 
+{% block title %}{{ project.name }}{% endblock %}
 
 {% block content %}
 <div class="container mt-4">
+    <!-- Detalii Proiect -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-primary text-white">
-            <h2 class="card-title mb-0">{{ project.name }}</h2>
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h2 class="card-title mb-0 h3">{{ project.name }}</h2>
+            {% if current_user.id == project.creator_id or current_user.id == project.manager_id or current_user.role == 'admin' %}
+                <a href="{{ url_for('update_project', project_id=project.id) }}" class="btn btn-light btn-sm">
+                    <i class="fas fa-edit"></i> Editează Proiect & Participanți
+                </a>
+            {% endif %}
         </div>
         <div class="card-body">
             <p><strong>Descriere:</strong> {{ project.description if project.description else 'N/A' }}</p>
             <p class="card-text">
                 <small class="text-muted">
-                    Creat de: {{ project.creator.username if project.creator else 'Utilizator necunoscut' }} 
+                    Creat de: {{ project.creator.username if project.creator else 'N/A' }} 
                     la {{ project.date_created.strftime('%d-%m-%Y %H:%M') }}
+                </small><br>
+                <small class="text-muted">
+                    Manager: {{ project.manager.username if project.manager else (project.creator.username if project.creator else 'N/A') }}
                 </small>
             </p>
-            {% if project.creator_id == current_user.id or current_user.role == 'admin' %}
+            
+            <h6>Participanți:</h6>
+            {% if project.participants.all() %}
+                <ul class="list-inline">
+                {% for participant in project.participants %}
+                    <li class="list-inline-item"><span class="badge bg-secondary">{{ participant.username }}</span></li>
+                {% endfor %}
+                </ul>
+            {% else %}
+                <p class="text-muted">Nu sunt alți participanți în afară de manager/creator.</p>
+            {% endif %}
+
+            {% if current_user.id == project.creator_id or current_user.role == 'admin' %}
             <div class="mt-3">
-                <a href="{{ url_for('update_project', project_id=project.id) }}" class="btn btn-sm btn-outline-secondary me-2">Editează Proiect</a>
                 <form method="POST" action="{{ url_for('delete_project', project_id=project.id) }}" style="display: inline;" onsubmit="return confirm('Ești sigur că vrei să ștergi acest proiect și toate fișierele asociate?');">
-                    {{ form.hidden_tag() if form else '' }} 
-                    <button type="submit" class="btn btn-sm btn-outline-danger">Șterge Proiect</button>
+                    {{ delete_project_form.hidden_tag() }} <!-- CSRF pentru ștergere proiect -->
+                    <button type="submit" class="btn btn-sm btn-danger">Șterge Proiectul Complet</button>
                 </form>
             </div>
             {% endif %}
         </div>
     </div>
 
+    <!-- Secțiune Încărcare Fișier Nou -->
+    {% if project.can_user_upload(current_user) %}
     <div class="card mb-4 shadow-sm">
         <div class="card-header">
             <h4 class="mb-0">Încarcă Fișier Nou</h4>
         </div>
         <div class="card-body">
             <form method="POST" action="{{ url_for('upload_file', project_id=project.id) }}" enctype="multipart/form-data">
-                {{ upload_form.hidden_tag() }}  
-                
+                {{ upload_form.hidden_tag() }}
                 <div class="mb-3">
-                    {{ upload_form.file.label(class="form-label") }}
+                    {{ upload_form.file.label(class="form-label fw-bold") }}
                     {% if upload_form.file.errors %}
                         {{ upload_form.file(class="form-control form-control-lg is-invalid") }}
                         <div class="invalid-feedback">
-                            {% for error in upload_form.file.errors %}
-                                <span>{{ error }}</span>
-                            {% endfor %}
+                            {% for error in upload_form.file.errors %}<span>{{ error }}</span>{% endfor %}
                         </div>
                     {% else %}
                         {{ upload_form.file(class="form-control form-control-lg") }}
                     {% endif %}
                 </div>
-                
                 <div class="d-grid">
                     {{ upload_form.submit(class="btn btn-primary btn-lg") }}
                 </div>
             </form>
         </div>
     </div>
+    {% else %}
+    <div class="alert alert-info" role="alert">
+        Nu ai permisiunea de a încărca fișiere în acest proiect. Doar managerul, creatorul sau participanții pot încărca.
+    </div>
+    {% endif %}
 
+
+    <!-- Secțiune Fișiere Proiect -->
     <div class="card shadow-sm">
         <div class="card-header">
             <h4 class="mb-0">Fișiere Proiect</h4>
         </div>
         <div class="card-body">
-            {% if files %} 
+            {% if files %}
                 <ul class="list-group list-group-flush">
-                    {% for file_item in files %} 
+                    {% for file_item in files %}
                         <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap">
                             <div class="me-auto">
-                                <a href="{{ url_for('download_file', file_id=file_item.id) }}" class="fw-bold">{{ file_item.original_filename }}</a>
+                                <a href="{{ url_for('download_file', file_id=file_item.id) }}" class="fw-bold text-decoration-none">{{ file_item.original_filename }}</a>
                                 <small class="d-block text-muted">
                                     Tip: {{ file_item.file_type if file_item.file_type else 'N/A' }}, 
-                                    Dimensiune: {{ "%.2f"|format(file_item.size / 1024 if file_item.size else 0) }} KB
+                                    Dimensiune: {{ "%.2f"|format(file_item.size / (1024*1024) if file_item.size else 0) }} MB
                                 </small>
                                 <small class="d-block text-muted">
-                                    Încărcat de: {{ file_item.uploader.username if file_item.uploader else 'Utilizator necunoscut' }} 
+                                    Încărcat de: {{ file_item.uploader.username if file_item.uploader else 'N/A' }} 
                                     la {{ file_item.upload_date.strftime('%d-%m-%Y %H:%M') }}
                                 </small>
                             </div>
-                            {% if current_user.id == file_item.uploader_id or current_user.id == project.creator_id or current_user.role == 'admin' %}
-                            <div class="mt-2 mt-md-0"> 
+                            {% if current_user.id == file_item.uploader_id or current_user.id == project.manager_id or current_user.id == project.creator_id or current_user.role == 'admin' %}
+                            <div class="mt-2 mt-md-0">
                                 <form method="POST" action="{{ url_for('delete_file', file_id=file_item.id) }}" style="display: inline;" onsubmit="return confirm('Ești sigur că vrei să ștergi acest fișier?');">
-                                    {{ form.hidden_tag() if form else '' }}
+                                    {{ delete_file_form.hidden_tag() }} <!-- CSRF pentru ștergere fișier -->
                                     <button type="submit" class="btn btn-danger btn-sm">Șterge</button>
                                 </form>
                             </div>

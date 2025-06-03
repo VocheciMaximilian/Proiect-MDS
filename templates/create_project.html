@@ -1,17 +1,19 @@
 {% extends "base.html" %}
 
+{% block title %}{{ title if title else 'Proiect Nou' }}{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
     <div class="row justify-content-center">
         <div class="col-md-8 col-lg-7">
-            <div class="content-section p-4 shadow-sm">
-                <form method="POST" action="">
-                    {{ form.hidden_tag() }}
+            <div class="content-section p-4 shadow-sm rounded">
+                <form method="POST" action=""> <!-- Acțiunea este goală, va submite la URL-ul curent -->
+                    {{ form.hidden_tag() }} <!-- CRUCIAL PENTRU CSRF -->
                     <fieldset class="form-group">
-                        <legend class="border-bottom mb-4 text-center">{{ legend }}</legend> 
+                        <legend class="border-bottom mb-4 text-center">{{ legend if legend else 'Creează Proiect Nou' }}</legend>
 
                         <div class="form-group mb-3">
-                            {{ form.name.label(class="form-control-label") }}
+                            {{ form.name.label(class="form-label fw-bold") }}
                             {% if form.name.errors %}
                                 {{ form.name(class="form-control form-control-lg is-invalid") }}
                                 <div class="invalid-feedback">
@@ -24,8 +26,8 @@
                             {% endif %}
                         </div>
 
-                        <div class="form-group mb-4">
-                            {{ form.description.label(class="form-control-label") }}
+                        <div class="form-group mb-3">
+                            {{ form.description.label(class="form-label fw-bold") }}
                             {% if form.description.errors %}
                                 {{ form.description(class="form-control form-control-lg is-invalid", rows=5) }}
                                 <div class="invalid-feedback">
@@ -37,11 +39,31 @@
                                 {{ form.description(class="form-control form-control-lg", rows=5) }}
                             {% endif %}
                         </div>
+
+                        <div class="form-group mb-4">
+                            {{ form.manager.label(class="form-label fw-bold") }}
+                            {% if form.manager.errors %}
+                                {{ form.manager(class="form-select form-select-lg is-invalid") }}
+                                <div class="invalid-feedback">
+                                    {% for error in form.manager.errors %}
+                                        <span>{{ error }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {{ form.manager(class="form-select form-select-lg") }}
+                            {% endif %}
+                            <small class="form-text text-muted">Dacă nu selectezi un manager, vei fi asignat automat ca manager.</small>
+                        </div>
                     </fieldset>
-                    <div class="form-group text-center">
-                        {{ form.submit(class="btn btn-lg btn-primary w-100") }}
+                    <div class="form-group text-center d-grid">
+                        {{ form.submit(class="btn btn-lg btn-primary") }}
                     </div>
                 </form>
+            </div>
+             <div class="border-top pt-3 mt-3 text-center">
+                <small class="text-muted">
+                    <a href="{{ url_for('projects_list') }}">Anulează și mergi la lista de proiecte</a>
+                </small>
             </div>
         </div>
     </div>
