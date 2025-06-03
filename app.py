@@ -1,5 +1,4 @@
 # 1. IMPORTURI
-
 from flask import Flask, render_template, url_for, flash, redirect, request, abort, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, current_user, logout_user, login_required
@@ -8,7 +7,7 @@ from flask_wtf.file import FileField, FileAllowed
 from wtforms import StringField, PasswordField, SubmitField, BooleanField, TextAreaField, SelectField
 from wtforms.fields import DateTimeLocalField 
 from wtforms.validators import DataRequired, Length, Email, EqualTo, ValidationError, Optional
-from wtforms_sqlalchemy.fields import QuerySelectField, QuerySelectMultipleField
+from wtforms_sqlalchemy.fields import QuerySelectField, QuerySelectMultipleField 
 from datetime import datetime, timezone 
 from functools import wraps
 import os
@@ -16,7 +15,8 @@ from dotenv import load_dotenv
 from werkzeug.utils import secure_filename 
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid 
-
+from flask_mail import Mail, Message # ADAUGAT PENTRU EMAIL
+from itsdangerous import URLSafeTimedSerializer as Serializer #PENTRU TOKEN EMAIL
 
 # 2. VARIABILE DE MEDIU 
 load_dotenv()
@@ -30,25 +30,34 @@ app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
 app.config['ALLOWED_EXTENSIONS'] = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'docx', 'xlsx', 'pptx', 'dwg', 'dxf', 'xml'}
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB
 
+app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
+app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() in ['true', '1', 't']
+app.config['MAIL_USE_SSL'] = os.getenv('MAIL_USE_SSL', 'false').lower() in ['true', '1', 't']
+app.config['MAIL_USERNAME'] = os.getenv('MAIL_EMAIL_USER')
+app.config['MAIL_PASSWORD'] = os.getenv('MAIL_EMAIL_PASS')
+app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', os.getenv('MAIL_EMAIL_USER'))
+
+
 os.makedirs(os.path.join(app.root_path, '..', 'instance'), exist_ok=True)
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # 4. EXTENSII FLASK
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
+mail = Mail(app) 
 login_manager.login_view = 'login'
 login_manager.login_message_category = 'info'
 login_manager.login_message = "Te rog să te autentifici pentru a accesa această pagină."
 
-
-# 5. BAZA DE DATE (SQLAlchemy)
+# 5. BAZA DE DATE 
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 project_participants = db.Table('project_participants',
-    db.Column('user_id', db.Integer, db.ForeignKey('user.id'), primary_key=True),
-    db.Column('project_id', db.Integer, db.ForeignKey('project.id'), primary_key=True)
+    db.Column('user_id', db.Integer, db.ForeignKey('user.id', name='fk_project_participants_user_id'), primary_key=True),
+    db.Column('project_id', db.Integer, db.ForeignKey('project.id', name='fk_project_participants_project_id'), primary_key=True)
 )
 
 class User(db.Model, UserMixin):
@@ -62,6 +71,21 @@ class User(db.Model, UserMixin):
     banned_until = db.Column(db.DateTime, nullable=True)
     projects_created = db.relationship('Project', backref='creator', lazy='dynamic', foreign_keys='Project.creator_id')
     files_uploaded = db.relationship('File', backref='uploader', lazy='dynamic', foreign_keys='File.uploader_id')
+    announcements = db.relationship('Announcement', backref='author', lazy='dynamic', foreign_keys='Announcement.user_id')
+    
+    def get_reset_token(self, expires_sec=1800): 
+        s = Serializer(app.config['SECRET_KEY'])
+        return s.dumps({'user_id': self.id})
+
+    @staticmethod
+    def verify_reset_token(token, expires_sec=1800):
+        s = Serializer(app.config['SECRET_KEY'])
+        try:
+            user_id = s.loads(token, max_age=expires_sec)['user_id']
+        except: 
+            return None
+        return db.session.get(User, user_id)
+        
     def __repr__(self): return f"User('{self.username}', '{self.email}', '{self.role}')"
 
 class Project(db.Model):
@@ -69,25 +93,37 @@ class Project(db.Model):
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text, nullable=True)
     date_created = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-    creator_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    manager_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    creator_id = db.Column(db.Integer, db.ForeignKey('user.id', name='fk_project_creator_id'), nullable=False)
+    manager_id = db.Column(db.Integer, db.ForeignKey('user.id', name='fk_project_manager_id'), nullable=True)
 
     manager = db.relationship('User', foreign_keys=[manager_id], backref=db.backref('managed_projects', lazy='dynamic'))
-    participants = db.relationship('User', secondary=project_participants, backref=db.backref('projects_participating', lazy='dynamic'), lazy='dynamic')
+    participants = db.relationship('User', secondary=project_participants,
+                                   backref=db.backref('projects_participating', lazy='dynamic'),
+                                   lazy='dynamic')
     files = db.relationship('File', backref='project_assoc', lazy='dynamic', cascade="all, delete-orphan")
+    announcements = db.relationship('Announcement', backref='project', lazy='dynamic', cascade="all, delete-orphan")
 
     def add_participant(self, user):
-        if not self.is_participant(user):
+        if user and not self.is_participant(user): 
             self.participants.append(user)
     def remove_participant(self, user):
-        if self.is_participant(user):
+        if user and self.is_participant(user): 
             self.participants.remove(user)
     def is_participant(self, user):
+        if not user: return False 
         return self.participants.filter(project_participants.c.user_id == user.id).count() > 0
     def can_user_upload(self, user):
+        if not user or not user.is_authenticated: return False 
         return user.id == self.manager_id or self.is_participant(user) or user.id == self.creator_id or user.role == 'admin'
     def can_user_manage_participants(self, user):
+        if not user or not user.is_authenticated: return False 
         return user.id == self.manager_id or user.role == 'admin'
+    def can_user_post_announcement(self, user):
+        if not user or not user.is_authenticated: return False
+        return (user.id == self.creator_id or
+                user.id == self.manager_id or
+                self.is_participant(user) or
+                user.role == 'admin')
     def __repr__(self): return f"Project('{self.name}', Manager ID: {self.manager_id if self.manager_id else 'None'})"
 
 
@@ -98,9 +134,17 @@ class File(db.Model):
     file_type = db.Column(db.String(50), nullable=True)
     upload_date = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     size = db.Column(db.Integer, nullable=True)
-    uploader_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    project_id = db.Column(db.Integer, db.ForeignKey('project.id'), nullable=False)
+    uploader_id = db.Column(db.Integer, db.ForeignKey('user.id', name='fk_file_uploader_id'), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey('project.id', name='fk_file_project_id'), nullable=False)
     def __repr__(self): return f"File('{self.original_filename}', Project ID: {self.project_id})"
+
+class Announcement(db.Model): 
+    id = db.Column(db.Integer, primary_key=True)
+    content = db.Column(db.Text, nullable=False)
+    date_posted = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', name='fk_announcement_user_id'), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey('project.id', name='fk_announcement_project_id'), nullable=False)
+    def __repr__(self): return f"Announcement('{self.content[:30]}...', '{self.date_posted}')"
 
 # 6. DEFINITII FORMULARE 
 class RegistrationForm(FlaskForm):
@@ -120,15 +164,15 @@ class LoginForm(FlaskForm):
     remember = BooleanField('Ține-mă minte')
     submit = SubmitField('Autentifică-te')
 
-# helper pentru QuerySelectField
 def get_all_users():
     return User.query.order_by(User.username).all()
 
 class ProjectForm(FlaskForm):
     name = StringField('Nume Proiect', validators=[DataRequired(), Length(max=100)])
     description = TextAreaField('Descriere (Opțional)')
-    manager = QuerySelectField('Manager Proiect', query_factory=get_all_users, get_label='username', allow_blank=True, blank_text='-- Fără Manager Asignat --')
-    submit = SubmitField('Salvează Proiect')
+    manager = QuerySelectField('Manager Proiect', query_factory=get_all_users, 
+                               get_label='username', allow_blank=True, blank_text='-- Fără Manager Asignat (Creatorul va fi Manager) --')
+    submit_project_details = SubmitField('Salvează Detaliile Proiectului')
 
 def allowed_file_check(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
@@ -152,8 +196,10 @@ class AdminUserUpdateForm(FlaskForm):
 class RequestResetForm(FlaskForm):
     email = StringField('Email', validators=[DataRequired(), Email(message="Adresă de email invalidă.")])
     submit = SubmitField('Solicită Resetarea Parolei')
-    def validate_email(self, email):
-        if not User.query.filter_by(email=email.data).first(): raise ValidationError('Nu există cont cu acest email.')
+    def validate_email(self, email): 
+        user = User.query.filter_by(email=email.data).first()
+        if not user: 
+            raise ValidationError('Nu există cont cu acest email.')
 
 class ResetPasswordForm(FlaskForm):
     password = PasswordField('Parolă Nouă', validators=[DataRequired(), Length(min=6)])
@@ -161,12 +207,18 @@ class ResetPasswordForm(FlaskForm):
     submit = SubmitField('Resetează Parola')
 
 class DeleteForm(FlaskForm):
-    submit = SubmitField('Șterge') 
+    pass 
 
 class ManageParticipantsForm(FlaskForm):
-    participants_to_add = QuerySelectMultipleField('Adaugă Participanți Noi', query_factory=get_all_users, get_label='username', render_kw={'size': 5})
-    submit_add_participants = SubmitField('Adaugă Participanți Selectați')
+    participants_to_add = QuerySelectMultipleField('Adaugă Participanți Noi', 
+                                                   query_factory=get_all_users, 
+                                                   get_label='username',
+                                                   render_kw={'size': 8, 'class': 'form-select'})
+    submit_add_participants = SubmitField('Adaugă Participanții Selectați')
 
+class AnnouncementForm(FlaskForm):
+    content = TextAreaField('Anunț', validators=[DataRequired(), Length(min=5, max=1000)])
+    submit_announcement = SubmitField('Postează Anunțul')
 
 # 7. DECORATORI SI FUNCTII HELPER
 def admin_required(f):
@@ -183,9 +235,7 @@ def generate_unique_stored_filename(original_filename):
     if '.' in original_filename: ext = original_filename.rsplit('.', 1)[1].lower()
     return f"{uuid.uuid4()}.{ext}" if ext else str(uuid.uuid4())
 
-
 # 8. RUTE Flask @app.route
-
 @app.route("/")
 @app.route("/home")
 def home():
@@ -216,53 +266,30 @@ def login():
     form = LoginForm()
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data).first()
-        print(f"--- DEBUG LOGIN: Attempting login for email: {form.email.data} ---")
-        if user:
-            print(f"--- DEBUG LOGIN: User found: {user.username}, ID: {user.id} ---")
-            print(f"--- DEBUG LOGIN: User.is_banned: {user.is_banned} (Type: {type(user.is_banned)}) ---")
-            print(f"--- DEBUG LOGIN: User.banned_until: {user.banned_until} (Type: {type(user.banned_until)}) ---")
-            if check_password_hash(user.password, form.password.data):
-                print(f"--- DEBUG LOGIN: Password for {user.username} is correct. ---")
-                if user.is_banned:
-                    print(f"--- DEBUG LOGIN: User {user.username} IS FLAGGED AS BANNED. ---")
-                    ban_message = 'Contul tău este momentan banat.'
-                    current_time_utc = datetime.now(timezone.utc)
-                    print(f"--- DEBUG LOGIN: Current UTC time: {current_time_utc} ---")
-                    if user.banned_until:
-                        banned_until_utc = user.banned_until
-                        if banned_until_utc.tzinfo is None or banned_until_utc.tzinfo.utcoffset(banned_until_utc) is None:
-                            banned_until_utc = banned_until_utc.replace(tzinfo=timezone.utc)
-                        print(f"--- DEBUG LOGIN: Ban expires at (UTC): {banned_until_utc} ---")
-                        if banned_until_utc > current_time_utc: 
-                            print(f"--- DEBUG LOGIN: Ban is still active for {user.username}. ---")
-                            ban_message += f' Accesul va fi restabilit după {banned_until_utc.strftime("%d-%m-%Y %H:%M UTC")}.'
-                            flash(ban_message, 'danger')
-                            return redirect(url_for('login'))
-                        else: 
-                            print(f"--- DEBUG LOGIN: Ban has expired for {user.username}. Lifting ban. ---")
-                            user.is_banned = False
-                            user.banned_until = None
-                            db.session.commit()
-                            flash('Perioada de ban a expirat. Te poți autentifica acum.', 'info')
-                    else: 
-                        print(f"--- DEBUG LOGIN: User {user.username} is permanently banned. ---")
-                        flash(ban_message + ' Permanent.', 'danger')
+        if user and check_password_hash(user.password, form.password.data):
+            if user.is_banned:
+                current_time_utc = datetime.now(timezone.utc)
+                if user.banned_until:
+                    banned_until_utc = user.banned_until
+                    if banned_until_utc.tzinfo is None: banned_until_utc = banned_until_utc.replace(tzinfo=timezone.utc)
+                    if banned_until_utc > current_time_utc:
+                        flash(f'Contul este banat până la {banned_until_utc.strftime("%d-%m-%Y %H:%M UTC")}.', 'danger')
                         return redirect(url_for('login'))
-                else:
-                    print(f"--- DEBUG LOGIN: User {user.username} is NOT flagged as banned. Proceeding to login. ---")
-                login_user(user, remember=form.remember.data)
-                next_page = request.args.get('next')
-                flash('Autentificare reușită!', 'success')
-                print(f"--- DEBUG LOGIN: Login successful for {user.username}. Redirecting. ---")
-                return redirect(next_page or url_for('home'))
-            else:
-                print(f"--- DEBUG LOGIN: Password for {user.username} is INCORRECT. ---")
-                flash('Autentificare eșuată. Verifică email-ul și parola.', 'danger')
+                    else:
+                        user.is_banned = False
+                        user.banned_until = None
+                        db.session.commit()
+                        flash('Perioada de ban a expirat.', 'info')
+                else: 
+                    flash('Contul este banat permanent.', 'danger')
+                    return redirect(url_for('login'))
+            login_user(user, remember=form.remember.data)
+            next_page = request.args.get('next')
+            flash('Autentificare reușită!', 'success')
+            return redirect(next_page or url_for('home'))
         else:
-            print(f"--- DEBUG LOGIN: User with email {form.email.data} NOT FOUND. ---")
-            flash('Autentificare eșuată. Verifică email-ul și parola.', 'danger')
+            flash('Autentificare eșuată. Verifică email și parolă.', 'danger')
     if request.method == 'POST' and not form.validate_on_submit():
-        print(f"--- DEBUG LOGIN: Form validation failed. Errors: {form.errors} ---")
         for fieldName, errorMessages in form.errors.items():
             for err in errorMessages: flash(f"Eroare în '{getattr(form, fieldName).label.text}': {err}", 'danger')
     return render_template('login.html', title='Autentificare', form=form)
@@ -289,30 +316,31 @@ def projects_list():
 @login_required
 def create_project():
     form = ProjectForm()
-    if request.method == 'GET' and not form.manager.data : # Pre-selectează creatorul ca manager
-         form.manager.data = current_user
+    if request.method == 'GET' and not form.manager.data :
+         form.manager.data = current_user 
 
     if form.validate_on_submit():
         try:
             project = Project(name=form.name.data, description=form.description.data, creator_id=current_user.id)
             if form.manager.data:
                 project.manager_id = form.manager.data.id
-            else: # Dac nu e selectat un manager, creatorul devine manager
+            else: 
                 project.manager_id = current_user.id
             
             db.session.add(project)
-            db.session.flush()
+            db.session.flush() 
             
-            project.add_participant(current_user) # Creatorul este participant
-            if project.manager and project.manager != current_user: # Adauga managerul dacă e diferit
+            project.add_participant(current_user) 
+            if project.manager and project.manager != current_user: 
                 project.add_participant(project.manager)
             
             db.session.commit()
             flash('Proiectul a fost creat cu succes!', 'success')
-            return redirect(url_for('project_detail', project_id=project.id))
+            return redirect(url_for('project_detail', project_id=project.id)) 
         except Exception as e:
             db.session.rollback()
             flash(f'Eroare la crearea proiectului: {str(e)}', 'danger')
+            print(f"Error creating project: {e}")
     for fieldName, errorMessages in form.errors.items():
         for err in errorMessages: flash(f"Eroare în '{getattr(form, fieldName).label.text}': {err}", 'danger')
     return render_template('create_project.html', title='Proiect Nou', form=form, legend='Creează Proiect Nou')
@@ -322,13 +350,25 @@ def create_project():
 def project_detail(project_id):
     project = db.session.get(Project, project_id) 
     if not project: abort(404)
+    if not (current_user.id == project.creator_id or 
+            current_user.id == project.manager_id or 
+            project.is_participant(current_user) or 
+            current_user.role == 'admin'):
+        flash('Nu ai permisiunea de a vizualiza acest proiect.', 'danger')
+        return redirect(url_for('projects_list'))
+
     files = File.query.filter_by(project_id=project.id).order_by(File.upload_date.desc()).all()
     upload_form = FileUploadForm()
     delete_file_form = DeleteForm() 
     delete_project_form = DeleteForm()
     participants_form = ManageParticipantsForm()
-
-    return render_template('view_project.html', title=project.name, project=project, files=files, upload_form=upload_form, delete_file_form=delete_file_form, delete_project_form=delete_project_form, participants_form=participants_form)
+    announcement_form = AnnouncementForm() 
+    announcements = Announcement.query.filter_by(project_id=project.id).order_by(Announcement.date_posted.desc()).all() 
+    
+    return render_template('view_project.html', title=project.name, project=project, files=files, 
+                           upload_form=upload_form, delete_file_form=delete_file_form, 
+                           delete_project_form=delete_project_form, participants_form=participants_form,
+                           announcement_form=announcement_form, announcements=announcements) 
 
 @app.route("/project/<int:project_id>/update", methods=['GET', 'POST'])
 @login_required
@@ -336,24 +376,30 @@ def update_project(project_id):
     project = db.session.get(Project, project_id)
     if not project: abort(404)
     if not (current_user.id == project.creator_id or current_user.id == project.manager_id or current_user.role == 'admin'):
-        abort(403) # Doar creator, manager sau admin pot edita
+        abort(403)
 
     form = ProjectForm(obj=project)
     participants_form = ManageParticipantsForm()
+    delete_participant_form = DeleteForm() 
 
     if request.method == 'GET':
         if project.manager:
             form.manager.data = project.manager
 
-    if form.validate_on_submit() and request.form.get('submit_project_details'): # Butonul principal de submit
+    if form.validate_on_submit() and 'submit_project_details' in request.form:
         try:
             project.name = form.name.data
             project.description = form.description.data
-            project.manager_id = form.manager.data.id if form.manager.data else project.creator_id 
+            new_manager = form.manager.data
             
-            # Asigură-te că noul manager este și participant
-            if project.manager:
-                project.add_participant(project.manager)
+            if new_manager and new_manager.id != project.manager_id:
+                if project.manager and project.manager_id != project.creator_id:
+                    project.remove_participant(project.manager)
+                project.manager_id = new_manager.id
+                project.add_participant(new_manager) 
+            elif not new_manager: 
+                project.manager_id = project.creator_id 
+                project.add_participant(project.creator) 
 
             db.session.commit()
             flash('Detaliile proiectului au fost actualizate!', 'success')
@@ -361,30 +407,81 @@ def update_project(project_id):
         except Exception as e:
             db.session.rollback()
             flash(f'Eroare la actualizarea proiectului: {str(e)}', 'danger')
+            print(f"Error updating project details: {e}")
 
-    if participants_form.validate_on_submit() and request.form.get('submit_add_participants'):
+    if participants_form.validate_on_submit() and 'submit_add_participants' in request.form:
         if project.can_user_manage_participants(current_user):
+            added_count = 0
             for user_to_add in participants_form.participants_to_add.data:
-                project.add_participant(user_to_add)
-            db.session.commit()
-            flash('Participanți adăugați cu succes!', 'success')
+                if not project.is_participant(user_to_add) and user_to_add.id != project.manager_id:
+                    project.add_participant(user_to_add)
+                    added_count +=1
+            if added_count > 0:
+                db.session.commit()
+                flash(f'{added_count} participanți adăugați cu succes!', 'success')
+            else:
+                flash('Niciun participant nou selectat sau participanții selectați sunt deja în proiect/manager.', 'info')
             return redirect(url_for('update_project', project_id=project.id))
         else:
             flash('Nu ai permisiunea de a gestiona participanții.', 'danger')
-
-    for fieldName, errorMessages in form.errors.items():
-        for err in errorMessages: flash(f"Eroare (detalii proiect) în '{getattr(form, fieldName).label.text}': {err}", 'danger')
-    for fieldName, errorMessages in participants_form.errors.items():
-        for err in errorMessages: flash(f"Eroare (participanți) în '{getattr(participants_form, fieldName).label.text}': {err}", 'danger')
+            
+    if request.method == 'POST':
+        if 'submit_project_details' in request.form:
+            for fieldName, errorMessages in form.errors.items():
+                for err in errorMessages: flash(f"Eroare (detalii proiect) în '{getattr(form, fieldName).label.text}': {err}", 'danger')
+        elif 'submit_add_participants' in request.form:
+            for fieldName, errorMessages in participants_form.errors.items():
+                for err in errorMessages: flash(f"Eroare (participanți) în '{getattr(participants_form, fieldName).label.text}': {err}", 'danger')
         
-    return render_template('edit_project.html', title='Actualizează Proiect', form=form, participants_form=participants_form, project=project, legend='Actualizează Proiect', delete_form=DeleteForm())
+    return render_template('edit_project.html', title='Actualizează Proiect', form=form, 
+                           participants_form=participants_form, project=project, legend='Actualizează Proiect',
+                           delete_form=delete_participant_form) 
+
+@app.route("/project/<int:project_id>/delete", methods=['POST'])
+@login_required
+def delete_project(project_id):
+    project = db.session.get(Project, project_id)
+    if not project:
+        abort(404)
+    
+    if not (current_user.id == project.creator_id or current_user.role == 'admin'):
+        flash('Nu ai permisiunea de a șterge acest proiect.', 'danger')
+        return redirect(url_for('project_detail', project_id=project.id))
+
+    form = DeleteForm() # Pentru validarea token-ului CSRF
+    if form.validate_on_submit():
+        try:
+            for file_obj in project.files: 
+                try:
+                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_obj.stored_filename)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except Exception as e_file:
+                    print(f"Eroare la ștergerea fișierului fizic {file_obj.stored_filename}: {e_file}")
+            
+            db.session.delete(project)
+            db.session.commit()
+            flash('Proiectul și toate datele asociate au fost șterse cu succes!', 'success')
+            return redirect(url_for('projects_list'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'A apărut o eroare la ștergerea proiectului: {str(e)}', 'danger')
+            print(f"Error deleting project: {e}")
+            return redirect(url_for('project_detail', project_id=project.id))
+    else:
+        if 'csrf_token' in form.errors:
+            flash('Eroare de securitate la ștergerea proiectului (CSRF). Te rugăm să încerci din nou.', 'danger')
+        else:
+            flash('A apărut o eroare la validarea formularului de ștergere.', 'danger')
+        return redirect(url_for('project_detail', project_id=project.id))
+
 
 @app.route('/project/<int:project_id>/remove_participant/<int:user_id>', methods=['POST'])
 @login_required
 def remove_project_participant(project_id, user_id):
     project = db.session.get(Project, project_id)
     user_to_remove = db.session.get(User, user_id)
-    form = DeleteForm() # Pentru CSRF
+    form = DeleteForm() 
 
     if not project or not user_to_remove:
         flash('Proiect sau utilizator negăsit.', 'warning')
@@ -396,13 +493,9 @@ def remove_project_participant(project_id, user_id):
     
     if user_to_remove.id == project.manager_id:
         flash('Nu poți elimina managerul proiectului. Schimbă mai întâi managerul.', 'warning')
-        return redirect(url_for('update_project', project_id=project.id))
-    
-    if user_to_remove.id == project.creator_id:
+    elif user_to_remove.id == project.creator_id:
         flash('Nu poți elimina creatorul proiectului din lista de participanți.', 'warning')
-        return redirect(url_for('update_project', project_id=project.id))
-
-    if form.validate_on_submit():
+    elif form.validate_on_submit(): 
         try:
             project.remove_participant(user_to_remove)
             db.session.commit()
@@ -415,42 +508,45 @@ def remove_project_participant(project_id, user_id):
         else: flash('A apărut o eroare la eliminarea participantului.', 'danger')
     return redirect(url_for('update_project', project_id=project.id))
 
-
-@app.route("/project/<int:project_id>/delete", methods=['POST'])
+@app.route("/project/<int:project_id>/new_announcement", methods=['POST'])
 @login_required
-def delete_project(project_id):
+def new_announcement(project_id):
     project = db.session.get(Project, project_id)
-    if not project: abort(404)
-    if not (current_user.id == project.creator_id or current_user.role == 'admin'): abort(403)
-    form = DeleteForm() 
+    if not project:
+        abort(404)
+
+    if not project.can_user_post_announcement(current_user):
+        flash('Nu ai permisiunea de a posta anunțuri în acest proiect.', 'danger')
+        return redirect(url_for('project_detail', project_id=project.id))
+
+    form = AnnouncementForm() 
     if form.validate_on_submit():
         try:
-            for file_obj in project.files:
-                try:
-                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_obj.stored_filename)
-                    if os.path.exists(file_path): os.remove(file_path)
-                except Exception as e_file: print(f"Eroare ștergere fișier fizic {file_obj.stored_filename}: {e_file}")
-            db.session.delete(project)
+            announcement = Announcement(content=form.content.data, 
+                                        user_id=current_user.id, 
+                                        project_id=project.id)
+            db.session.add(announcement)
             db.session.commit()
-            flash('Proiectul și fișierele asociate au fost șterse!', 'success')
+            flash('Anunțul tău a fost postat!', 'success')
         except Exception as e:
             db.session.rollback()
-            flash(f'Eroare la ștergerea proiectului: {str(e)}', 'danger')
+            flash(f'Eroare la postarea anunțului: {str(e)}', 'danger')
+            print(f"Error posting announcement: {e}")
     else:
-        if 'csrf_token' in form.errors: flash('Eroare CSRF la ștergerea proiectului. Încearcă din nou.', 'danger')
-        else: flash('Eroare la ștergerea proiectului.', 'danger')
-    return redirect(url_for('projects_list'))
+        for fieldName, errorMessages in form.errors.items():
+            for err in errorMessages:
+                flash(f"Eroare în câmpul '{getattr(form, fieldName).label.text}': {err}", 'danger')
+    
+    return redirect(url_for('project_detail', project_id=project.id))
 
 @app.route("/project/<int:project_id>/upload_file", methods=['POST'])
 @login_required
 def upload_file(project_id):
     project = db.session.get(Project, project_id)
     if not project: abort(404)
-    
     if not project.can_user_upload(current_user):
         flash('Nu ai permisiunea de a încărca fișiere în acest proiect.', 'danger')
         return redirect(url_for('project_detail', project_id=project.id))
-        
     form = FileUploadForm() 
     if form.validate_on_submit():
         file_data = form.file.data
@@ -459,7 +555,9 @@ def upload_file(project_id):
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_fn)
         try:
             file_data.save(file_path)
-            new_file = File(original_filename=original_fn, stored_filename=stored_fn, file_type=original_fn.rsplit('.', 1)[1].lower() if '.' in original_fn else '', size=os.path.getsize(file_path), uploader_id=current_user.id, project_id=project.id)
+            new_file = File(original_filename=original_fn, stored_filename=stored_fn,
+                            file_type=original_fn.rsplit('.', 1)[1].lower() if '.' in original_fn else '',
+                            size=os.path.getsize(file_path), uploader_id=current_user.id, project_id=project.id)
             db.session.add(new_file)
             db.session.commit()
             flash('Fișier încărcat cu succes!', 'success')
@@ -470,7 +568,7 @@ def upload_file(project_id):
     else: 
         for fieldName, errorMessages in form.errors.items():
             for err in errorMessages: flash(f"Eroare în '{getattr(form, fieldName).label.text}': {err}", 'danger')
-    return redirect(url_for('project_detail', project_id=project_id))
+    return redirect(url_for('project_detail', project_id=project.id))
 
 @app.route("/download_file/<int:file_id>")
 @login_required
@@ -486,7 +584,8 @@ def download_file(file_id):
         flash('Nu ai permisiunea de a descărca acest fișier.', 'danger')
         return redirect(url_for('project_detail', project_id=project.id))
     try:
-        return send_from_directory(app.config['UPLOAD_FOLDER'], file_obj.stored_filename, as_attachment=True, download_name=file_obj.original_filename)
+        return send_from_directory(app.config['UPLOAD_FOLDER'], file_obj.stored_filename, 
+                                   as_attachment=True, download_name=file_obj.original_filename)
     except FileNotFoundError: abort(404, description="Fișierul nu a fost găsit pe server.")
 
 @app.route("/delete_file/<int:file_id>", methods=['POST'])
@@ -564,8 +663,8 @@ def admin_delete_user(user_id):
     form = DeleteForm()
     if form.validate_on_submit():
         try:
-            projects_to_delete = Project.query.filter_by(creator_id=user_to_delete.id).all()
-            for project in projects_to_delete:
+            projects_created_by_user = Project.query.filter_by(creator_id=user_to_delete.id).all()
+            for project in projects_created_by_user:
                 for file_obj in project.files:
                     try:
                         file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_obj.stored_filename)
@@ -573,21 +672,26 @@ def admin_delete_user(user_id):
                     except Exception as e_file: print(f"Eroare ștergere fișier fizic {file_obj.stored_filename}: {e_file}")
                 db.session.delete(project)
             
-            for project_he_participates_in in user_to_delete.projects_participating:
+            for project_he_participates_in in list(user_to_delete.projects_participating):
                 project_he_participates_in.remove_participant(user_to_delete)
 
-            for project_he_manages in user_to_delete.managed_projects:
-                project_he_manages.manager_id = project_he_manages.creator_id 
-                project_he_manages.add_participant(project_he_manages.creator) 
-                flash(f"Managerul proiectului '{project_he_manages.name}' a fost schimbat la creatorul proiectului.", "info")
+            for project_he_manages in list(user_to_delete.managed_projects):
+                if project_he_manages.creator: 
+                    project_he_manages.manager_id = project_he_manages.creator_id 
+                    project_he_manages.add_participant(project_he_manages.creator) 
+                    flash(f"Managerul proiectului '{project_he_manages.name}' a fost schimbat la creator ({project_he_manages.creator.username}).", "info")
+                else: 
+                    project_he_manages.manager_id = None 
+                    flash(f"Managerul proiectului '{project_he_manages.name}' a fost eliminat (creatorul nu mai există).", "warning")
 
             files_uploaded_by_user = File.query.filter_by(uploader_id=user_to_delete.id).all()
             for file_obj in files_uploaded_by_user:
-                try:
-                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_obj.stored_filename)
-                    if os.path.exists(file_path): os.remove(file_path)
-                    db.session.delete(file_obj)
-                except Exception as e_file_other: print(f"Eroare ștergere fișier (alt proiect) {file_obj.stored_filename}: {e_file_other}")
+                if db.session.get(Project, file_obj.project_id):
+                    try:
+                        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_obj.stored_filename)
+                        if os.path.exists(file_path): os.remove(file_path)
+                        db.session.delete(file_obj)
+                    except Exception as e_file_other: print(f"Eroare ștergere fișier {file_obj.stored_filename}: {e_file_other}")
             
             db.session.delete(user_to_delete)
             db.session.commit()
@@ -595,13 +699,30 @@ def admin_delete_user(user_id):
         except Exception as e:
             db.session.rollback()
             flash(f'Eroare la ștergerea utilizatorului: {str(e)}', 'danger')
+            print(f"Error deleting user: {e}") 
     else:
         if 'csrf_token' in form.errors: flash('Eroare CSRF la ștergerea utilizatorului. Încearcă din nou.', 'danger')
-        else: flash('Eroare la ștergerea utilizatorului.', 'danger')
+        else: flash('Eroare la ștergerea utilizatorului (validare eșuată).', 'danger')
     return redirect(url_for('admin_users_list'))
 
-def send_reset_email(user): 
-    flash(f"Email de resetare trimis (simulat) către {user.email}.", "info")
+def send_reset_email(user):
+    token = user.get_reset_token()
+    msg = Message('Cerere Resetare Parolă - ColabConstruct',
+                  sender=app.config['MAIL_DEFAULT_SENDER'],
+                  recipients=[user.email])
+    msg.body = f'''Pentru a reseta parola, accesează următorul link:
+{url_for('reset_token', token=token, _external=True)}
+
+Dacă nu ai făcut tu această cerere, te rugăm să ignori acest email.
+Link-ul este valid pentru 30 de minute.
+'''
+    try:
+        mail.send(msg)
+        print(f"--- DEBUG: Email de resetare trimis REAL către {user.email} ---")
+        return True
+    except Exception as e:
+        print(f"--- DEBUG: EROARE la trimiterea email-ului REAL: {str(e)} ---")
+        return False
 
 @app.route("/reset_password", methods=['GET', 'POST'])
 def reset_request():
@@ -609,9 +730,11 @@ def reset_request():
     form = RequestResetForm()
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data).first() 
-        send_reset_email(user)
-        flash('Instrucțiuni trimise dacă emailul există.', 'info')
-        return redirect(url_for('login'))
+        if send_reset_email(user): 
+            flash('Un email cu instrucțiuni pentru resetarea parolei a fost trimis (dacă emailul există).', 'info')
+        else:
+            flash('A apărut o problemă la trimiterea email-ului. Te rugăm să încerci mai târziu.', 'danger')
+        return redirect(url_for('login')) 
     for fieldName, errorMessages in form.errors.items(): 
         for err in errorMessages: flash(f"Eroare în '{getattr(form, fieldName).label.text}': {err}", 'danger')
     return render_template('reset_request.html', title='Resetează Parola', form=form)
@@ -619,16 +742,9 @@ def reset_request():
 @app.route("/reset_password/<token>", methods=['GET', 'POST'])
 def reset_token(token):
     if current_user.is_authenticated: return redirect(url_for('home'))
-    user_id_simulated = request.args.get('user_id_for_reset_simulation') 
-    if not user_id_simulated:
-        flash('Link de resetare invalid sau expirat (simulare necesită user_id).', 'warning')
-        return redirect(url_for('reset_request'))
-    try:
-        user = db.session.get(User, int(user_id_simulated))
-    except ValueError:
-        user = None
-    if not user:
-        flash('Utilizator pentru resetare negăsit (simulare).', 'warning')
+    user = User.verify_reset_token(token) 
+    if user is None:
+        flash('Tokenul este invalid sau a expirat.', 'warning')
         return redirect(url_for('reset_request'))
 
     form = ResetPasswordForm()

@@ -6,7 +6,6 @@
 <div class="container mt-4">
     <div class="row justify-content-center">
         <div class="col-md-9 col-lg-8">
-            <!-- Formular pentru Detaliile Proiectului -->
             <div class="content-section p-4 shadow-sm rounded mb-4">
                 <form method="POST" action="{{ url_for('update_project', project_id=project.id) }}">
                     {{ form.hidden_tag() }}
@@ -55,7 +54,6 @@
                 </form>
             </div>
 
-            <!-- Secțiune Gestionare Participanți -->
             {% if project.can_user_manage_participants(current_user) %}
             <div class="content-section p-4 shadow-sm rounded mb-4">
                 <h4 class="border-bottom mb-3 pb-2">Gestionează Participanții</h4>

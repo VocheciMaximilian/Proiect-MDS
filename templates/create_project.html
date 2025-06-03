@@ -7,8 +7,8 @@
     <div class="row justify-content-center">
         <div class="col-md-8 col-lg-7">
             <div class="content-section p-4 shadow-sm rounded">
-                <form method="POST" action=""> <!-- Acțiunea este goală, va submite la URL-ul curent -->
-                    {{ form.hidden_tag() }} <!-- CRUCIAL PENTRU CSRF -->
+                <form method="POST" action=""> 
+                    {{ form.hidden_tag() }} 
                     <fieldset class="form-group">
                         <legend class="border-bottom mb-4 text-center">{{ legend if legend else 'Creează Proiect Nou' }}</legend>
 
@@ -56,7 +56,7 @@
                         </div>
                     </fieldset>
                     <div class="form-group text-center d-grid">
-                        {{ form.submit(class="btn btn-lg btn-primary") }}
+                        {{ form.submit_project_details(class="btn btn-lg btn-primary") }}
                     </div>
                 </form>
             </div>
