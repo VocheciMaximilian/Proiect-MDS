@@ -1,4 +1,8 @@
+# app.py
+
+# ==============================================================================
 # 1. IMPORTURI
+# ==============================================================================
 from flask import Flask, render_template, url_for, flash, redirect, request, abort, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, current_user, logout_user, login_required
@@ -16,12 +20,16 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid 
 from flask_mail import Mail, Message # ADAUGAT PENTRU EMAIL
-from itsdangerous import URLSafeTimedSerializer as Serializer #PENTRU TOKEN EMAIL
+from itsdangerous import URLSafeTimedSerializer as Serializer # ADAUGAT PENTRU TOKEN EMAIL
 
+# ==============================================================================
 # 2. VARIABILE DE MEDIU 
+# ==============================================================================
 load_dotenv()
 
+# ==============================================================================
 # 3. CONFIGURARE APLICATIE FLASK
+# ==============================================================================
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dfg34g_DFG34_dfg34DFG_dfg34dfg3DFG34dfg') 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///../instance/site.db')
@@ -30,6 +38,7 @@ app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
 app.config['ALLOWED_EXTENSIONS'] = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'docx', 'xlsx', 'pptx', 'dwg', 'dxf', 'xml'}
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB
 
+# Configurații Flask-Mail (citite din .env)
 app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
 app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() in ['true', '1', 't']
@@ -42,15 +51,20 @@ app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', os.getenv('
 os.makedirs(os.path.join(app.root_path, '..', 'instance'), exist_ok=True)
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+# ==============================================================================
 # 4. EXTENSII FLASK
+# ==============================================================================
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
-mail = Mail(app) 
+mail = Mail(app) # INIȚIALIZARE FLASK-MAIL
 login_manager.login_view = 'login'
 login_manager.login_message_category = 'info'
 login_manager.login_message = "Te rog să te autentifici pentru a accesa această pagină."
 
-# 5. BAZA DE DATE 
+
+# ==============================================================================
+# 5. BAZA DE DATE (SQLAlchemy)
+# ==============================================================================
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -71,7 +85,7 @@ class User(db.Model, UserMixin):
     banned_until = db.Column(db.DateTime, nullable=True)
     projects_created = db.relationship('Project', backref='creator', lazy='dynamic', foreign_keys='Project.creator_id')
     files_uploaded = db.relationship('File', backref='uploader', lazy='dynamic', foreign_keys='File.uploader_id')
-    announcements = db.relationship('Announcement', backref='author', lazy='dynamic', foreign_keys='Announcement.user_id')
+    announcements = db.relationship('Announcement', backref='author', lazy='dynamic', foreign_keys='Announcement.user_id') 
     
     def get_reset_token(self, expires_sec=1800): 
         s = Serializer(app.config['SECRET_KEY'])
@@ -101,7 +115,7 @@ class Project(db.Model):
                                    backref=db.backref('projects_participating', lazy='dynamic'),
                                    lazy='dynamic')
     files = db.relationship('File', backref='project_assoc', lazy='dynamic', cascade="all, delete-orphan")
-    announcements = db.relationship('Announcement', backref='project', lazy='dynamic', cascade="all, delete-orphan")
+    announcements = db.relationship('Announcement', backref='project', lazy='dynamic', cascade="all, delete-orphan") 
 
     def add_participant(self, user):
         if user and not self.is_participant(user): 
@@ -118,7 +132,7 @@ class Project(db.Model):
     def can_user_manage_participants(self, user):
         if not user or not user.is_authenticated: return False 
         return user.id == self.manager_id or user.role == 'admin'
-    def can_user_post_announcement(self, user):
+    def can_user_post_announcement(self, user): 
         if not user or not user.is_authenticated: return False
         return (user.id == self.creator_id or
                 user.id == self.manager_id or
@@ -146,7 +160,10 @@ class Announcement(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey('project.id', name='fk_announcement_project_id'), nullable=False)
     def __repr__(self): return f"Announcement('{self.content[:30]}...', '{self.date_posted}')"
 
+
+# ==============================================================================
 # 6. DEFINITII FORMULARE 
+# ==============================================================================
 class RegistrationForm(FlaskForm):
     username = StringField('Nume utilizator', validators=[DataRequired(), Length(min=2, max=20)])
     email = StringField('Email', validators=[DataRequired(), Email(message="Adresă de email invalidă.")])
@@ -216,11 +233,13 @@ class ManageParticipantsForm(FlaskForm):
                                                    render_kw={'size': 8, 'class': 'form-select'})
     submit_add_participants = SubmitField('Adaugă Participanții Selectați')
 
-class AnnouncementForm(FlaskForm):
+class AnnouncementForm(FlaskForm): 
     content = TextAreaField('Anunț', validators=[DataRequired(), Length(min=5, max=1000)])
     submit_announcement = SubmitField('Postează Anunțul')
 
+# ==============================================================================
 # 7. DECORATORI SI FUNCTII HELPER
+# ==============================================================================
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -235,7 +254,32 @@ def generate_unique_stored_filename(original_filename):
     if '.' in original_filename: ext = original_filename.rsplit('.', 1)[1].lower()
     return f"{uuid.uuid4()}.{ext}" if ext else str(uuid.uuid4())
 
+def send_project_invitation_email(user_to_notify, project, added_by_user): # ADAUGAT
+    """Trimite un email de notificare când un user este adăugat la un proiect."""
+    try:
+        msg = Message(f'Ai fost adăugat la proiectul: "{project.name}" - ColabConstruct',
+                      sender=app.config['MAIL_DEFAULT_SENDER'],
+                      recipients=[user_to_notify.email])
+        msg.body = f'''Salut {user_to_notify.username},
+
+Ai fost adăugat ca participant la proiectul "{project.name}" de către utilizatorul {added_by_user.username}.
+
+Poți vizualiza proiectul și colabora accesând următorul link:
+{url_for('project_detail', project_id=project.id, _external=True)}
+
+Spor la lucru!
+Echipa ColabConstruct
+'''
+        mail.send(msg)
+        print(f"--- DEBUG: Email de invitație la proiect trimis către {user_to_notify.email} pentru proiectul '{project.name}' ---")
+        return True
+    except Exception as e:
+        print(f"--- DEBUG: EROARE la trimiterea email-ului de invitație către {user_to_notify.email}: {str(e)} ---")
+        return False
+
+# ==============================================================================
 # 8. RUTE Flask @app.route
+# ==============================================================================
 @app.route("/")
 @app.route("/home")
 def home():
@@ -394,10 +438,11 @@ def update_project(project_id):
             
             if new_manager and new_manager.id != project.manager_id:
                 if project.manager and project.manager_id != project.creator_id:
-                    project.remove_participant(project.manager)
+                    if project.manager_id != project.creator_id: # Adăugat verificare
+                         project.remove_participant(project.manager)
                 project.manager_id = new_manager.id
                 project.add_participant(new_manager) 
-            elif not new_manager: 
+            elif not new_manager and project.creator: 
                 project.manager_id = project.creator_id 
                 project.add_participant(project.creator) 
 
@@ -411,70 +456,40 @@ def update_project(project_id):
 
     if participants_form.validate_on_submit() and 'submit_add_participants' in request.form:
         if project.can_user_manage_participants(current_user):
-            added_count = 0
+            users_actually_added = [] # MODIFICAT: Inițializare listă
             for user_to_add in participants_form.participants_to_add.data:
-                if not project.is_participant(user_to_add) and user_to_add.id != project.manager_id:
+                if not project.is_participant(user_to_add) and (not project.manager or user_to_add.id != project.manager.id):
                     project.add_participant(user_to_add)
-                    added_count +=1
-            if added_count > 0:
-                db.session.commit()
-                flash(f'{added_count} participanți adăugați cu succes!', 'success')
+                    users_actually_added.append(user_to_add) # MODIFICAT: Adaugă la listă
+            
+            if users_actually_added: # MODIFICAT: Verifică dacă s-au adăugat useri
+                try:
+                    db.session.commit()
+                    flash(f'{len(users_actually_added)} participanți adăugați cu succes!', 'success')
+                    # MODIFICAT: Trimite email-uri de notificare
+                    for invited_user in users_actually_added:
+                        send_project_invitation_email(invited_user, project, current_user) 
+                except Exception as e:
+                    db.session.rollback()
+                    flash(f'Eroare la salvarea participanților sau la trimiterea notificărilor: {str(e)}', 'danger')
+                    print(f"Error committing participants or sending emails: {e}")
             else:
-                flash('Niciun participant nou selectat sau participanții selectați sunt deja în proiect/manager.', 'info')
+                flash('Niciun participant nou de adăugat sau participanții selectați sunt deja în proiect/manager.', 'info')
             return redirect(url_for('update_project', project_id=project.id))
         else:
             flash('Nu ai permisiunea de a gestiona participanții.', 'danger')
             
     if request.method == 'POST':
-        if 'submit_project_details' in request.form:
+        if 'submit_project_details' in request.form and not form.validate():
             for fieldName, errorMessages in form.errors.items():
                 for err in errorMessages: flash(f"Eroare (detalii proiect) în '{getattr(form, fieldName).label.text}': {err}", 'danger')
-        elif 'submit_add_participants' in request.form:
+        elif 'submit_add_participants' in request.form and not participants_form.validate():
             for fieldName, errorMessages in participants_form.errors.items():
                 for err in errorMessages: flash(f"Eroare (participanți) în '{getattr(participants_form, fieldName).label.text}': {err}", 'danger')
         
     return render_template('edit_project.html', title='Actualizează Proiect', form=form, 
                            participants_form=participants_form, project=project, legend='Actualizează Proiect',
                            delete_form=delete_participant_form) 
-
-@app.route("/project/<int:project_id>/delete", methods=['POST'])
-@login_required
-def delete_project(project_id):
-    project = db.session.get(Project, project_id)
-    if not project:
-        abort(404)
-    
-    if not (current_user.id == project.creator_id or current_user.role == 'admin'):
-        flash('Nu ai permisiunea de a șterge acest proiect.', 'danger')
-        return redirect(url_for('project_detail', project_id=project.id))
-
-    form = DeleteForm() # Pentru validarea token-ului CSRF
-    if form.validate_on_submit():
-        try:
-            for file_obj in project.files: 
-                try:
-                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_obj.stored_filename)
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception as e_file:
-                    print(f"Eroare la ștergerea fișierului fizic {file_obj.stored_filename}: {e_file}")
-            
-            db.session.delete(project)
-            db.session.commit()
-            flash('Proiectul și toate datele asociate au fost șterse cu succes!', 'success')
-            return redirect(url_for('projects_list'))
-        except Exception as e:
-            db.session.rollback()
-            flash(f'A apărut o eroare la ștergerea proiectului: {str(e)}', 'danger')
-            print(f"Error deleting project: {e}")
-            return redirect(url_for('project_detail', project_id=project.id))
-    else:
-        if 'csrf_token' in form.errors:
-            flash('Eroare de securitate la ștergerea proiectului (CSRF). Te rugăm să încerci din nou.', 'danger')
-        else:
-            flash('A apărut o eroare la validarea formularului de ștergere.', 'danger')
-        return redirect(url_for('project_detail', project_id=project.id))
-
 
 @app.route('/project/<int:project_id>/remove_participant/<int:user_id>', methods=['POST'])
 @login_required
@@ -508,17 +523,50 @@ def remove_project_participant(project_id, user_id):
         else: flash('A apărut o eroare la eliminarea participantului.', 'danger')
     return redirect(url_for('update_project', project_id=project.id))
 
+@app.route("/project/<int:project_id>/delete", methods=['POST'])
+@login_required
+def delete_project(project_id):
+    project = db.session.get(Project, project_id)
+    if not project:
+        abort(404)
+    if not (current_user.id == project.creator_id or current_user.role == 'admin'):
+        flash('Nu ai permisiunea de a șterge acest proiect.', 'danger')
+        return redirect(url_for('project_detail', project_id=project.id))
+    form = DeleteForm() 
+    if form.validate_on_submit():
+        try:
+            for file_obj in project.files:
+                try:
+                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_obj.stored_filename)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except Exception as e_file:
+                    print(f"Eroare la ștergerea fișierului fizic {file_obj.stored_filename}: {e_file}")
+            db.session.delete(project)
+            db.session.commit()
+            flash('Proiectul și toate datele asociate au fost șterse cu succes!', 'success')
+            return redirect(url_for('projects_list')) 
+        except Exception as e:
+            db.session.rollback()
+            flash(f'A apărut o eroare la ștergerea proiectului: {str(e)}', 'danger')
+            print(f"Error deleting project: {e}")
+            return redirect(url_for('project_detail', project_id=project.id))
+    else:
+        if 'csrf_token' in form.errors:
+            flash('Eroare de securitate la ștergerea proiectului (CSRF). Te rugăm să încerci din nou.', 'danger')
+        else:
+            flash('A apărut o eroare la validarea formularului de ștergere.', 'danger')
+        return redirect(url_for('project_detail', project_id=project.id))
+
 @app.route("/project/<int:project_id>/new_announcement", methods=['POST'])
 @login_required
 def new_announcement(project_id):
     project = db.session.get(Project, project_id)
     if not project:
         abort(404)
-
     if not project.can_user_post_announcement(current_user):
         flash('Nu ai permisiunea de a posta anunțuri în acest proiect.', 'danger')
         return redirect(url_for('project_detail', project_id=project.id))
-
     form = AnnouncementForm() 
     if form.validate_on_submit():
         try:
@@ -536,7 +584,6 @@ def new_announcement(project_id):
         for fieldName, errorMessages in form.errors.items():
             for err in errorMessages:
                 flash(f"Eroare în câmpul '{getattr(form, fieldName).label.text}': {err}", 'danger')
-    
     return redirect(url_for('project_detail', project_id=project.id))
 
 @app.route("/project/<int:project_id>/upload_file", methods=['POST'])
@@ -705,6 +752,7 @@ def admin_delete_user(user_id):
         else: flash('Eroare la ștergerea utilizatorului (validare eșuată).', 'danger')
     return redirect(url_for('admin_users_list'))
 
+# --- RUTE PENTRU RESETAREA PAROLEI ---
 def send_reset_email(user):
     token = user.get_reset_token()
     msg = Message('Cerere Resetare Parolă - ColabConstruct',
@@ -757,7 +805,9 @@ def reset_token(token):
         for err in errorMessages: flash(f"Eroare în '{getattr(form, fieldName).label.text}': {err}", 'danger')
     return render_template('reset_token.html', title='Resetează Parola', form=form, token=token)
 
+# ==============================================================================
 # 9. BLOC PENTRU RULARE DIRECTA SI CREARE DB
+# ==============================================================================
 if __name__ == '__main__':
     with app.app_context():
         db.create_all() 
