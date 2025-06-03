@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <h2>Edit User: {{ user.username }} ({{ user.email }})</h2>
+    <form method="POST" action="">
+        {{ form.hidden_tag() }}
+        <fieldset class="form-group">
+            <legend class="border-bottom mb-4">User Details</legend>
+            <div class="form-group">
+                {{ form.role.label(class="form-control-label") }}
+                {{ form.role(class="form-control form-control-lg") }}
+                {% if form.role.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.role.errors %}<span>{{ error }}</span>{% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+            <div class="form-group form-check">
+                {{ form.is_banned(class="form-check-input") }}
+                {{ form.is_banned.label(class="form-check-label") }}
+            </div>
+            <div class="form-group">
+                {{ form.banned_until.label(class="form-control-label") }}
+                {{ form.banned_until(class="form-control form-control-lg") }}
+                <small class="form-text text-muted">Leave blank if ban is permanent or user is not banned.</small>
+                 {% if form.banned_until.errors %}
+                    <div class="invalid-feedback d-block">
+                        {% for error in form.banned_until.errors %}<span>{{ error }}</span>{% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </fieldset>
+        <div class="form-group mt-3">
+            {{ form.submit(class="btn btn-outline-info") }}
+            <a href="{{ url_for('admin_users_list') }}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

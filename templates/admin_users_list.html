@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title if title else 'Administrare Utilizatori' }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>{{ title if title else 'Administrare Utilizatori' }}</h1>
+    </div>
+
+    {# Afișare mesaje flash - presupunând că base.html le gestionează sau le pui aici #}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    {% if users and users.items %}
+    <div class="table-responsive shadow-sm rounded">
+        <table class="table table-hover table-striped align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th scope="col">ID</th>
+                    <th scope="col">Nume utilizator</th>
+                    <th scope="col">Email</th>
+                    <th scope="col">Rol</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Banat Până La</th>
+                    <th scope="col" class="text-center">Acțiuni</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user_item in users.items %}
+                <tr>
+                    <td>{{ user_item.id }}</td>
+                    <td>{{ user_item.username }}</td>
+                    <td>{{ user_item.email }}</td>
+                    <td><span class="badge {% if user_item.role == 'admin' %}bg-danger{% elif user_item.role == 'manager' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">{{ user_item.role.capitalize() }}</span></td>
+                    <td>
+                        {% if user_item.is_banned %}
+                            <span class="badge bg-danger">Banat</span>
+                        {% else %}
+                            <span class="badge bg-success">Activ</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user_item.banned_until.strftime('%d-%m-%Y %H:%M') if user_item.banned_until else '-' }}</td>
+                    <td class="text-center">
+                        <a href="{{ url_for('admin_edit_user', user_id=user_item.id) }}" class="btn btn-sm btn-outline-primary me-1" title="Editează Utilizator">
+                            <i class="fas fa-edit"></i> Editează 
+                        </a>
+                        
+                        {# Condiții pentru a afișa butonul de ștergere #}
+                        {% set can_delete = True %}
+                        {% if user_item.id == current_user.id %}
+                            {% set can_delete = False %} {# Nu te poți șterge singur #}
+                        {% elif user_item.role == 'admin' %}
+                            {# Verifică dacă există mai mult de un admin. Necesită o interogare sau o variabilă pasată. #}
+                            {# Pentru simplitate, vom presupune că această logică e în ruta Python. Aici doar afișăm dacă e permis. #}
+                            {# O soluție mai bună ar fi să pasezi un flag 'can_be_deleted' pentru fiecare user din rută. #}
+                            {# Sau, mai simplu, ruta de ștergere va refuza dacă e ultimul admin. #}
+                        {% endif %}
+
+                        {% if can_delete %}
+                        <form method="POST" action="{{ url_for('admin_delete_user', user_id=user_item.id) }}" style="display: inline-block;" onsubmit="return confirm('Ești sigur că vrei să ștergi utilizatorul {{ user_item.username }} și toate datele asociate? Această acțiune este ireversibilă!');">
+                            {{ delete_form.hidden_tag() }} 
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Șterge Utilizator">
+                                <i class="fas fa-trash-alt"></i> Șterge 
+                            </button>
+                        </form>
+                        {% else %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Acțiune indisponibilă">
+                                <i class="fas fa-trash-alt"></i> Șterge
+                            </button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if users.pages and users.pages > 1 %}
+    <nav aria-label="User pagination" class="mt-4">
+        <ul class="pagination justify-content-center">
+            <li class="page-item {% if not users.has_prev %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('admin_users_list', page=users.prev_num if users.has_prev else '#') }}">Anterior</a>
+            </li>
+            {% for page_num in users.iter_pages(left_edge=1, right_edge=1, left_current=1, right_current=2) %}
+                {% if page_num %}
+                    {% if users.page == page_num %}
+                        <li class="page-item active" aria-current="page"><span class="page-link">{{ page_num }}</span></li>
+                    {% else %}
+                        <li class="page-item"><a class="page-link" href="{{ url_for('admin_users_list', page=page_num) }}">{{ page_num }}</a></li>
+                    {% endif %}
+                {% else %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
+            {% endfor %}
+            <li class="page-item {% if not users.has_next %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('admin_users_list', page=users.next_num if users.has_next else '#') }}">Următor</a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+
+    {% elif users and users.total == 0 %}
+        <div class="alert alert-info mt-4" role="alert">
+            Nu există utilizatori în sistem (cu excepția ta, dacă ești singurul).
+        </div>
+    {% else %}
+        <div class="alert alert-warning mt-4" role="alert">
+            Nu s-au putut încărca utilizatorii sau nu există utilizatori.
+        </div>
+    {% endif %}
+</div>
+{% endblock content %}

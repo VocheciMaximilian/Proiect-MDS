@@ -1,16 +1,63 @@
-{% extends "base.html" %}
-{% block title %}Autentificare{% endblock %}
+{% extends "base.html" %} 
+
 {% block content %}
-  <h2>Autentificare</h2>
-  <form method="POST" action="{{ url_for('login') }}">
-    <div class="form-group">
-      <label for="email">Email</label>
-      <input type="email" class="form-control" id="email" name="email" required>
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="content-section p-4 shadow-sm">
+                <form method="POST" action="">
+                    {{ form.hidden_tag() }} 
+                    <fieldset class="form-group">
+                        <legend class="border-bottom mb-4 text-center">Autentificare</legend>
+
+                        <div class="form-group mb-3">
+                            {{ form.email.label(class="form-control-label") }}
+                            {% if form.email.errors %}
+                                {{ form.email(class="form-control form-control-lg is-invalid") }}
+                                <div class="invalid-feedback">
+                                    {% for error in form.email.errors %}
+                                        <span>{{ error }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {{ form.email(class="form-control form-control-lg") }}
+                            {% endif %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            {{ form.password.label(class="form-control-label") }}
+                            {% if form.password.errors %}
+                                {{ form.password(class="form-control form-control-lg is-invalid") }}
+                                <div class="invalid-feedback">
+                                    {% for error in form.password.errors %}
+                                        <span>{{ error }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {{ form.password(class="form-control form-control-lg") }}
+                            {% endif %}
+                        </div>
+
+                        <div class="form-check mb-4">
+                            {{ form.remember(class="form-check-input") }}
+                            {{ form.remember.label(class="form-check-label") }}
+                        </div>
+                    </fieldset>
+                    <div class="form-group text-center">
+                        {{ form.submit(class="btn btn-lg btn-primary w-100") }} 
+                    </div>
+                </form>
+            </div>
+            <div class="border-top pt-3 mt-3 text-center">
+                <small class="text-muted">
+                    Nu ai un cont? <a class="ml-2" href="{{ url_for('register') }}">Înregistrează-te Acum</a>
+                </small>
+                <br>
+                <small class="text-muted">
+                    <a href="{{ url_for('reset_request') }}">Ai uitat parola?</a> 
+                </small>
+            </div>
+        </div>
     </div>
-    <div class="form-group">
-      <label for="password">Parolă</label>
-      <input type="password" class="form-control" id="password" name="password" required>
-    </div>
-    <button type="submit" class="btn btn-primary">Autentifică-te</button>
-  </form>
-{% endblock %}
+</div>
+{% endblock content %}
